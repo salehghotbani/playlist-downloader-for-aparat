@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { deferred, fakeDownloads, until } from './helpers.js';
@@ -16,8 +16,8 @@ class Element {
 const dictionaries = Object.fromEntries(await Promise.all(['en', 'fa'].map(async (code) =>
   [code, JSON.parse(await readFile(new URL(`../locales/${code}.json`, import.meta.url), 'utf8'))])));
 let revision = 0;
-async function setup(t, { fetchAPI, downloads = fakeDownloads() } = {}) {
-  const names = ['document', 'window', 'localStorage', 'matchMedia', 'location', 'browser'];
+async function setupApp(t, { fetchAPI, downloads = fakeDownloads(), namespace } = {}) {
+  const names = ['document', 'window', 'localStorage', 'matchMedia', 'location', 'browser', 'chrome'];
   const previous = Object.fromEntries(names.map((name) => [name, globalThis[name]]));
   const elements = new Map();
   const $ = (id) => {
@@ -31,7 +31,9 @@ async function setup(t, { fetchAPI, downloads = fakeDownloads() } = {}) {
   globalThis.localStorage = { getItem: () => 'en', setItem: () => {} };
   globalThis.matchMedia = () => ({ matches: false, addEventListener: () => {} });
   globalThis.location = { search: '' };
-  globalThis.browser = { downloads };
+  globalThis.browser = undefined;
+  globalThis.chrome = undefined;
+  globalThis[namespace] = { downloads };
   t.after(() => Object.assign(globalThis, previous));
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     const locale = url.pathname.match(/\/locales\/(en|fa)\.json$/)?.[1];
@@ -48,6 +50,10 @@ async function setup(t, { fetchAPI, downloads = fakeDownloads() } = {}) {
 
 const playlist = (uids = ['a', 'b', 'c']) => ({ data: { title: 'test', cnt: uids.length, video: { data: uids.map((uid) => ({ uid, title: uid, duration: 60 })) } } });
 const video = { video: { can_download: true, file_link_all: [{ profile: '720p', urls: ['https://cdn.test/a.mp4'] }] } };
+
+for (const namespace of ['browser', 'chrome']) {
+describe(`app using ${namespace} APIs`, () => {
+const setup = (t, options) => setupApp(t, { ...options, namespace });
 
 test('concurrent load and run attempts cannot replace the list or duplicate the queue', async (t) => {
   const pending = deferred();
@@ -159,7 +165,7 @@ test('retrying unfinished rows does not download completed videos again', async 
   assert.ok(app.statuses().every((status) => status.className === 'status ok'));
 });
 
-test('cancelling a file in Firefox does not automatically restart it', async (t) => {
+test('cancelling a file in the browser does not automatically restart it', async (t) => {
   let starts = 0;
   const app = await setup(t, {
     fetchAPI: async (url) => Response.json(url.pathname.includes('/playlist/') ? playlist(['a']) : video),
@@ -205,3 +211,5 @@ test('an empty playlist and a failed reload leave controls usable', async (t) =>
   assert.match(app.$('msg').textContent, /HTTP 404/);
   assert.equal(app.$('load').disabled, false);
 });
+});
+}
